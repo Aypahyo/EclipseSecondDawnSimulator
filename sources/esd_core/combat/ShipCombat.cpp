@@ -66,10 +66,10 @@ esd::DiceSet ShipCombat::GetTotalEngagementDice(const esd::CombatState &state, c
     ship_fight_stats = defender.ships[order_id];
   }
   DiceSet d{};
-  d.yellow = ship_fight_stats.yellow_cannon * ship_count;
-  d.orange = ship_fight_stats.orange_cannon * ship_count;
-  d.blue = ship_fight_stats.blue_cannon * ship_count;
-  d.red = ship_fight_stats.red_cannon * ship_count;
+  d.yellow = ship_fight_stats.cannon_yellow * ship_count;
+  d.orange = ship_fight_stats.cannon_orange * ship_count;
+  d.blue = ship_fight_stats.cannon_blue * ship_count;
+  d.red = ship_fight_stats.cannon_red * ship_count;
   return d;
 }
 
@@ -90,10 +90,10 @@ esd::DiceSet ShipCombat::GetTotalMissileDice(const esd::CombatState &state, cons
     ship_fight_stats = defender.ships[order_id];
   }
   DiceSet d{};
-  d.yellow = ship_fight_stats.yellow_cannon * ship_count;
-  d.orange = ship_fight_stats.orange_cannon * ship_count;
-  d.blue = ship_fight_stats.blue_cannon * ship_count;
-  d.red = ship_fight_stats.red_cannon * ship_count;
+  d.yellow = ship_fight_stats.cannon_yellow * ship_count;
+  d.orange = ship_fight_stats.cannon_orange * ship_count;
+  d.blue = ship_fight_stats.cannon_blue * ship_count;
+  d.red = ship_fight_stats.cannon_red * ship_count;
   return d;
 }
 
@@ -117,7 +117,7 @@ InitiativeOrder ShipCombat::GetTurnOrder(const esd::Fleet &attacker, const esd::
 
   for (int i = 0; i < ship_id_initiative.size(); ++i) {
     auto id = std::get<0>(ship_id_initiative[i]);
-    initiative_order.turnorder[i] = id;
+    initiative_order.turn_order[i] = id;
   }
   return initiative_order;
 }

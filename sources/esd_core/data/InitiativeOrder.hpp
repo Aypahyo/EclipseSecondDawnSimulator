@@ -12,7 +12,7 @@ constexpr char InitiativeOrder_Defender = 5;
 constexpr char InitiativeOrder_Attacker = 1;
 
 struct InitiativeOrder {
-  char turnorder[8];
+  char turn_order[8];
 };
 
 static_assert(std::is_trivial<InitiativeOrder>());
