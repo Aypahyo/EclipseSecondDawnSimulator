@@ -36,3 +36,7 @@
 
 # CMAKE
 cmake-build-*/**
+cmake/**
+
+# build directory
+build/**

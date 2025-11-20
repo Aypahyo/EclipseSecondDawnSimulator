@@ -1,24 +1,22 @@
 cmake_minimum_required(VERSION 3.20)
-
-set(project_version 0.0.0)
-set(project_description "EclipseSecondDawnSimulator")
-set(project_homepage "https://github.com/Aypahyo/EclipseSecondDawnSimulator")
-
-project(FlayedStar
-        VERSION ${project_version}
-        DESCRIPTION ${project_description}
-        HOMEPAGE_URL ${project_homepage}
-        LANGUAGES C CXX
-        )
+project(EclipseSecondDawnSimulator LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
-include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
-conan_basic_setup(TARGETS)
-
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-add_subdirectory(sources/EclipseSecondDawnSimulator)
-add_subdirectory(sources/esd_core)
-add_subdirectory(sources/esd_test)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+find_package(SDL2 REQUIRED)
 
+add_executable(eclipse_sim
+    src/main.cpp
+    src/render/bitmap_font.cpp
+    src/game/tech_catalog.cpp
+    src/game/battle_simulator.cpp
+)
+
+target_include_directories(eclipse_sim PRIVATE include)
+
+target_link_libraries(eclipse_sim PRIVATE SDL2::SDL2)
