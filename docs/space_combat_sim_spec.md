@@ -117,3 +117,73 @@ Each part definition requires:
 - Updated data catalogs (JSON or constexpr tables) for ship parts, with unit tests verifying completeness.
 - Implementation updates inside `src/game/battle_simulator.cpp` adhering to this spec.
 - Developer documentation describing how to add new parts or clarify rules additions.
+
+## 11. Ship Blueprint & Upgrade Reference
+
+The simulator shares its data model with the blueprint/upgrade UI. This section captures the authoritative consulting notes so engineering can keep both systems aligned.
+
+### 11.1 Blueprint Structure
+
+Every faction controls four ship blueprints—**Interceptor**, **Cruiser**, **Dreadnought**, and **Starbase**. Each blueprint contains:
+
+1. **Ship Part Spaces**: A grid of generic slots with no per-slot type restriction. Any tile can technically occupy any space, subject only to the global placement constraints below.
+2. **Pre-Printed Parts ("preprints")**: Symbols drawn in specific slots on the cardboard blueprint. They function as permanent bottom-layer parts that can be overridden by tiles but never removed from the stack.
+3. **Blueprint Extras**: Optional symbols printed outside the grid. They behave exactly like parts, but cannot be removed or covered and are always active.
+4. **Blueprint Properties**: Base initiative bonuses, baked-in energy production from extras, and faction modifiers (e.g., +energy, +computer).
+
+### 11.2 Stack & Overlay Mechanics
+
+Each grid slot is a tiny stack:
+
+```text
+Top    → Player tile, if one is installed
+Bottom → Printed symbol, if one exists
+```
+
+- When a tile is present, only the tile's stats apply.
+- Removing the tile reactivates the preprint immediately.
+- Empty slots with no preprint contribute nothing.
+- Extras outside the grid are immutable and always count.
+
+### 11.3 Placement Restrictions (Rules Enforcement)
+
+- **Energy**: `Σ energyConsumption ≤ Σ energyProduction` must hold for the entire blueprint. Reject any placement violating this budget.
+- **Drive Requirement**: Interceptors, Cruisers, and Dreadnoughts must end with at least one active drive (preprint or tile). Starbases may never contain drives.
+- **Tech Ownership**: A tile can be placed only if its technology is researched (unless a discovery explicitly overrides this).
+- **Ancient Tile Removal**: Removing an Ancient part from a ship removes that tile from the game permanently.
+- **Starbase Drive Ban**: Any attempt to place a drive tile on a starbase blueprint is illegal.
+
+### 11.4 Human (Terran) Baseline Preprints
+
+The Terran layouts define the canonical slot counts (Interceptor 4, Cruiser 6, Dreadnought 8, Starbase 5) and preprints that other factions modify:
+
+- **Interceptor**: Ion Cannon, Nuclear Drive, Basic Reactor (+3 energy), one free slot; base initiative +2.
+- **Cruiser**: Ion Cannon, Nuclear Drive, Basic Reactor, Computer +1, Hull +1, one free slot; base initiative +1.
+- **Dreadnought**: Two Ion Cannons, two Hull +1, Computer +1, Nuclear Drive, Basic Reactor, one free slot; base initiative +0.
+- **Starbase**: Computer +1, Ion Cannon, two Hull +1, one free slot, immutable Basic Reactor (+3 energy) as an extra; base initiative +5 (no drives allowed).
+
+### 11.5 Faction Modifiers
+
+- **Eridani Empire**: Identical layout to Humans, but each non-starbase blueprint gains +1 energy production (starbase unchanged).
+- **PLANTA**: Layout swaps one printed slot to a free `X` slot per blueprint and adds +1 computer/+1 energy (Interceptor, Cruiser, Dreadnought) or +1 computer/+5 energy (Starbase). All base initiatives become 0 except the starbase, which is 2. Layout diagrams remain the same size as Terran boards.
+- **Orion Hegemony**: Human layout. Initiative bonuses change to 3/2/1/5 for Interceptor/Cruiser/Dreadnought/Starbase respectively. Non-starbase blueprints gain +1/+2/+3 energy. Every free slot starts with a preprinted "-1 shield" Gauss Shield that can be overridden by tiles.
+
+### 11.6 Derived Stat Computation
+
+Final ship stats are determined by summing:
+
+1. Active tiles (top of stack in each slot)
+2. Uncovered preprints (bottom layer when no tile is installed)
+3. Extras outside the grid
+4. Faction-wide modifiers (energy, computers, initiative, etc.)
+
+The totals drive `ShipLoadout::derivedStats()` (energy produced vs consumed, initiative, drives/movement, weapon dice by type, hull, shields, computers). The existing energy validation should incorporate blueprint extras and faction modifiers before allowing loadouts into combat.
+
+### 11.7 UI & Simulator Impact
+
+- **Data Model**: Extend the blueprint data definitions (likely in `TechCatalog`) to include slots, preprints, extras, and faction modifiers so both `ShipLoadout` builders and the simulator consume identical metadata.
+- **UI Validation**: The fleet builder must enforce the placement rules above (drive requirements, starbase bans, energy budget, tech ownership). Slot stacks should toggle between tile/preprint visuals per §11.2.
+- **Simulator Inputs**: `ShipLoadout` instances generated from these blueprints must already respect energy and drive rules; simulator validation remains as a safety net.
+- **Faction Customization**: Ensure UI defaults (auto-filled slots) use the faction-specific preprints rather than always Terran versions. Tests should confirm that Eridani energy bonuses, PLANTA initiative changes, and Orion shield overlays propagate into `ShipDerivedStats` and combat outcomes.
+
+Documenting this reference here keeps the combat spec, ship editor, and tests synchronized with the tabletop ruleset. Future blueprint changes should update this section alongside `TechCatalog` data and UI validation logic.

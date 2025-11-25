@@ -25,6 +25,7 @@ struct FleetShip {
 	ShipLoadout loadout;
 	size_t designIndex = 0;
 	Faction faction = Faction::Human;
+	bool active = true;
 };
 
 struct SlotRect {
@@ -39,6 +40,11 @@ struct ArrowRect {
 	int delta;
 };
 
+struct ToggleRect {
+	FleetShip* ship;
+	SDL_Rect rect;
+};
+
 struct DragPayload {
 	bool active = false;
 	const ModuleSpec* spec = nullptr;
@@ -47,6 +53,17 @@ struct DragPayload {
 	bool fromPalette = false;
 	int mouseX = 0;
 	int mouseY = 0;
+};
+
+struct ModuleCategory {
+	std::string name;
+	std::vector<const ModuleSpec*> modules;
+};
+
+struct CategoryOption {
+	size_t index;
+	SDL_Rect rect;
+	std::string label;
 };
 
 bool pointInRect(int x, int y, const SDL_Rect& rect) {
@@ -72,6 +89,18 @@ const char* slotLabel(SlotType slot) {
 		case SlotType::Support: return "SUP";
 	}
 	return "";
+}
+
+const char* slotCategoryLabel(SlotType slot) {
+	switch (slot) {
+		case SlotType::Weapon: return "Weapons";
+		case SlotType::Drive: return "Drives";
+		case SlotType::Computer: return "Computers";
+		case SlotType::Shield: return "Shields";
+		case SlotType::Power: return "Power";
+		case SlotType::Support: return "Support";
+	}
+	return "Modules";
 }
 
 SDL_Color slotColor(SlotType slot) {
@@ -116,29 +145,17 @@ std::pair<SDL_Rect, SDL_Rect> arrowRectsForCard(const SDL_Rect& rect) {
 	return {left, right};
 }
 
-void assignDesign(FleetShip& ship, const std::vector<const ShipDesign*>& options, size_t index,
-				  const ModuleSpec* defaultDrive, const ModuleSpec* defaultWeapon) {
+SDL_Rect toggleRectForCard(const SDL_Rect& rect) {
+	return SDL_Rect{rect.x + rect.w - 130, rect.y + 10, 80, 28};
+}
+
+void assignDesign(FleetShip& ship, const std::vector<const ShipDesign*>& options, size_t index) {
 	if (options.empty()) {
 		ship.loadout.setDesign(nullptr);
 		return;
 	}
 	ship.designIndex = index % options.size();
 	ship.loadout.setDesign(options[ship.designIndex]);
-	auto& modules = ship.loadout.modules();
-	bool drivePlaced = false;
-	for (size_t i = 0; i < modules.size(); ++i) {
-		if (ship.loadout.design()->slots[i] == SlotType::Drive && defaultDrive && !drivePlaced) {
-			ship.loadout.setModule(i, defaultDrive);
-			drivePlaced = true;
-		}
-	}
-	bool weaponPlaced = false;
-	for (size_t i = 0; i < modules.size(); ++i) {
-		if (ship.loadout.design()->slots[i] == SlotType::Weapon && defaultWeapon && !weaponPlaced) {
-			ship.loadout.setModule(i, defaultWeapon);
-			weaponPlaced = true;
-		}
-	}
 }
 
 bool ensureModulePlacement(FleetShip& ship, size_t slotIndex, const ModuleSpec* spec) {
@@ -156,45 +173,88 @@ bool ensureModulePlacement(FleetShip& ship, size_t slotIndex, const ModuleSpec* 
 }
 
 std::vector<FleetShip> createFleet(Faction faction,
-								   const std::vector<const ShipDesign*>& options,
-								   const ModuleSpec* defaultDrive,
-								   const ModuleSpec* defaultWeapon) {
+					   const std::vector<const ShipDesign*>& options) {
 	std::vector<FleetShip> fleet(3);
 	for (size_t i = 0; i < fleet.size(); ++i) {
 		fleet[i].faction = faction;
 		if (!options.empty()) {
-			assignDesign(fleet[i], options, std::min(i, options.size() - 1), defaultDrive, defaultWeapon);
+			assignDesign(fleet[i], options, std::min(i, options.size() - 1));
 		}
 	}
 	return fleet;
 }
 
-std::vector<PaletteEntry> buildPalette(const std::vector<const ModuleSpec*>& modules,
-									   const SDL_Rect& area) {
-	std::vector<PaletteEntry> entries;
-	constexpr std::array<SlotType, 5> columnOrder = {
-		SlotType::Weapon, SlotType::Drive, SlotType::Computer, SlotType::Shield, SlotType::Power};
-
-	int columnWidth = area.w / static_cast<int>(columnOrder.size());
-	int tileHeight = 70;
-	int headerHeight = 28;
-
-	for (size_t col = 0; col < columnOrder.size(); ++col) {
-		SlotType slot = columnOrder[col];
+std::vector<ModuleCategory> buildModuleCategories(const std::vector<const ModuleSpec*>& modules) {
+	std::vector<ModuleCategory> categories;
+	constexpr int maxPerCategory = 25;
+	const std::array<SlotType, 6> order = {
+		SlotType::Weapon, SlotType::Drive, SlotType::Computer,
+		SlotType::Shield, SlotType::Power, SlotType::Support};
+	for (SlotType slot : order) {
 		std::vector<const ModuleSpec*> filtered;
 		std::copy_if(modules.begin(), modules.end(), std::back_inserter(filtered), [&](const ModuleSpec* spec) {
 			return spec->slot == slot;
 		});
-		for (size_t i = 0; i < filtered.size(); ++i) {
-			SDL_Rect rect;
-			rect.x = area.x + static_cast<int>(col) * columnWidth + 10;
-			rect.y = area.y + headerHeight + 10 + static_cast<int>(i) * (tileHeight + 10);
-			rect.w = columnWidth - 20;
-			rect.h = tileHeight;
-			entries.push_back({filtered[i], rect});
+		if (filtered.empty()) {
+			continue;
+		}
+		int chunks = static_cast<int>((filtered.size() + maxPerCategory - 1) / maxPerCategory);
+		for (int chunk = 0; chunk < chunks; ++chunk) {
+			int start = chunk * maxPerCategory;
+			int end = std::min(start + maxPerCategory, static_cast<int>(filtered.size()));
+			ModuleCategory category;
+			category.name = slotCategoryLabel(slot);
+			if (chunks > 1) {
+				category.name += " " + std::to_string(chunk + 1);
+			}
+			category.modules.insert(category.modules.end(), filtered.begin() + start, filtered.begin() + end);
+			categories.push_back(std::move(category));
 		}
 	}
+	if (categories.empty()) {
+		ModuleCategory fallback;
+		fallback.name = "Modules";
+		fallback.modules = modules;
+		categories.push_back(std::move(fallback));
+	}
+	return categories;
+}
+
+std::vector<PaletteEntry> buildPalette(const std::vector<const ModuleSpec*>& modules,
+								   const SDL_Rect& area) {
+	std::vector<PaletteEntry> entries;
+	constexpr int columns = 5;
+	constexpr int rows = 5;
+	const int spacing = 6;
+	int tileWidth = (area.w - (columns + 1) * spacing) / columns;
+	int tileHeight = (area.h - (rows + 1) * spacing) / rows;
+	for (size_t i = 0; i < modules.size() && i < static_cast<size_t>(columns * rows); ++i) {
+		int row = static_cast<int>(i) / columns;
+		int col = static_cast<int>(i) % columns;
+		SDL_Rect rect;
+		rect.x = area.x + spacing + col * (tileWidth + spacing);
+		rect.y = area.y + spacing + row * (tileHeight + spacing);
+		rect.w = tileWidth;
+		rect.h = tileHeight;
+		entries.push_back({modules[i], rect});
+	}
 	return entries;
+}
+
+std::vector<CategoryOption> buildCategoryOptions(const SDL_Rect& dropdown,
+											   const std::vector<ModuleCategory>& categories) {
+	std::vector<CategoryOption> options;
+	int optionHeight = 26;
+	int spacing = 4;
+	for (size_t i = 0; i < categories.size(); ++i) {
+		SDL_Rect rect;
+		rect.x = dropdown.x;
+		rect.y = dropdown.y + dropdown.h + spacing + static_cast<int>(i) * (optionHeight + spacing);
+		rect.w = dropdown.w;
+		rect.h = optionHeight;
+		options.push_back({i, rect, categories[i].name});
+	}
+	return options;
 }
 
 std::vector<SDL_Rect> layoutCards(const SDL_Rect& area, size_t count) {
@@ -239,31 +299,51 @@ std::vector<ArrowRect> buildArrows(std::vector<FleetShip>& fleet,
 	return arrows;
 }
 
+std::vector<ToggleRect> buildToggles(std::vector<FleetShip>& fleet,
+						 const std::vector<SDL_Rect>& cardRects) {
+	std::vector<ToggleRect> toggles;
+	for (size_t i = 0; i < fleet.size() && i < cardRects.size(); ++i) {
+		toggles.push_back({&fleet[i], toggleRectForCard(cardRects[i])});
+	}
+	return toggles;
+}
+
 void renderPalette(SDL_Renderer* renderer, BitmapFont& font, const SDL_Rect& area,
+				   const SDL_Rect& dropdownRect, const std::string& categoryName,
+				   bool dropdownOpen, const std::vector<CategoryOption>& options,
 				   const std::vector<PaletteEntry>& entries) {
 	drawPanel(renderer, area, colorFromHex(0x1B1F3B), colorFromHex(0x394989));
-	constexpr std::array<std::pair<SlotType, const char*>, 5> headers = {
-		std::make_pair(SlotType::Weapon, "WEAPONS"),
-		std::make_pair(SlotType::Drive, "DRIVES"),
-		std::make_pair(SlotType::Computer, "COMPUTERS"),
-		std::make_pair(SlotType::Shield, "SHIELDS"),
-		std::make_pair(SlotType::Power, "POWER")};
-	int columnWidth = area.w / static_cast<int>(headers.size());
-	for (size_t i = 0; i < headers.size(); ++i) {
-		int headerX = area.x + static_cast<int>(i) * columnWidth + 12;
-		font.drawText(renderer, headers[i].second, headerX, area.y + 6, colorFromHex(0xF7FFF7), 2);
-	}
+	SDL_Color dropdownFill = colorFromHex(0x23395B);
+	drawPanel(renderer, dropdownRect, dropdownFill, colorFromHex(0xF4F1DE));
+	font.drawText(renderer, categoryName, dropdownRect.x + 8, dropdownRect.y + 8,
+			  colorFromHex(0xF7FFF7), 1);
+	int arrowX = dropdownRect.x + dropdownRect.w - 20;
+	SDL_SetRenderDrawColor(renderer, 244, 241, 222, 255);
+	SDL_RenderDrawLine(renderer, arrowX - 6, dropdownRect.y + 12, arrowX, dropdownRect.y + 18);
+	SDL_RenderDrawLine(renderer, arrowX + 6, dropdownRect.y + 12, arrowX, dropdownRect.y + 18);
+
 	for (const PaletteEntry& entry : entries) {
 		SDL_Color fill = slotColor(entry.spec->slot);
 		drawPanel(renderer, entry.rect, fill, colorFromHex(0x000000));
 		font.drawText(renderer, entry.spec->shortLabel, entry.rect.x + 6, entry.rect.y + 6,
-					  colorFromHex(0x000000), 2);
+				  colorFromHex(0x000000), 1);
 		std::string energy = "E:" + std::to_string(entry.spec->energyCost) +
-							 " P:" + std::to_string(entry.spec->energyProvided);
-		font.drawText(renderer, energy, entry.rect.x + 6, entry.rect.y + 32, colorFromHex(0x000000), 2);
+					 " P:" + std::to_string(entry.spec->energyProvided);
+		font.drawText(renderer, energy, entry.rect.x + 6, entry.rect.y + 24, colorFromHex(0x000000), 1);
 	}
+
+	if (dropdownOpen) {
+		for (const CategoryOption& option : options) {
+			SDL_Color fill = option.label == categoryName ? colorFromHex(0x2E5A88)
+											 : colorFromHex(0x1D2D50);
+			drawPanel(renderer, option.rect, fill, colorFromHex(0xF4F1DE));
+			font.drawText(renderer, option.label.c_str(), option.rect.x + 6, option.rect.y + 6,
+					  colorFromHex(0xF7FFF7), 1);
+		}
+	}
+
 	font.drawText(renderer, "Drag modules onto ships. Right click removes.",
-				  area.x + 10, area.y + area.h - 100, colorFromHex(0xF4F1DE), 2);
+			  area.x + 12, area.y + area.h - 60, colorFromHex(0xF4F1DE), 1);
 }
 
 void renderArrow(SDL_Renderer* renderer, const SDL_Rect& rect, bool isRight) {
@@ -282,39 +362,56 @@ void renderShipCard(SDL_Renderer* renderer, BitmapFont& font, FleetShip& ship,
 					const SDL_Rect& rect, bool isHuman) {
 	SDL_Color fill = isHuman ? colorFromHex(0x14213D) : colorFromHex(0x2F1847);
 	SDL_Color border = isHuman ? colorFromHex(0x3A506B) : colorFromHex(0x6247AA);
+	if (!ship.active) {
+		fill = colorFromHex(0x1F1F2E);
+		border = colorFromHex(0x4A4E69);
+	}
 	drawPanel(renderer, rect, fill, border);
 
 	auto [prevRect, nextRect] = arrowRectsForCard(rect);
 	renderArrow(renderer, prevRect, false);
 	renderArrow(renderer, nextRect, true);
 
+	SDL_Rect toggleRect = toggleRectForCard(rect);
+	SDL_Color toggleFill = ship.active ? colorFromHex(0x2EC4B6) : colorFromHex(0x8D99AE);
+	drawPanel(renderer, toggleRect, toggleFill, colorFromHex(0x011627));
+	const char* toggleText = ship.active ? "ACTIVE" : "INACTIVE";
+	font.drawText(renderer, toggleText, toggleRect.x + 8, toggleRect.y + 6, colorFromHex(0x011627), 1);
+
 	std::string title = ship.loadout.design() ? ship.loadout.design()->name : "NO DESIGN";
-	font.drawText(renderer, title, rect.x + 50, rect.y + 16, colorFromHex(0xF0F4EF), 2);
+	font.drawText(renderer, title, rect.x + 50, rect.y + 16, colorFromHex(0xF0F4EF), 1);
 
 	ShipDerivedStats stats = ship.loadout.derivedStats();
 	std::ostringstream statLine;
 	statLine << "H" << stats.hull << " D" << stats.dice << " C" << stats.computer
 			 << " S" << stats.shield;
-	font.drawText(renderer, statLine.str(), rect.x + 20, rect.y + 52, colorFromHex(0xF4F1BB), 2);
+	font.drawText(renderer, statLine.str(), rect.x + 20, rect.y + 52, colorFromHex(0xF4F1BB), 1);
 
 	std::string energyLine = "ENERGY " + std::to_string(stats.energyUsed) + "/" +
 							 std::to_string(stats.energyAvailable);
-	font.drawText(renderer, energyLine, rect.x + rect.w - 200, rect.y + 52, colorFromHex(0xF4F1BB), 2);
+	font.drawText(renderer, energyLine, rect.x + rect.w - 200, rect.y + 52, colorFromHex(0xF4F1BB), 1);
 
 	std::string error = ship.loadout.validationError();
-	if (!error.empty()) {
-		font.drawText(renderer, error, rect.x + 20, rect.y + rect.h - 28, colorFromHex(0xEF233C), 2);
+	if (ship.active && !error.empty()) {
+		font.drawText(renderer, error, rect.x + 20, rect.y + rect.h - 28, colorFromHex(0xEF233C), 1);
+	} else if (!ship.active) {
+		font.drawText(renderer, "Ship inactive", rect.x + 20, rect.y + rect.h - 28,
+				  colorFromHex(0xADB5BD), 1);
 	}
 
 	for (size_t slotIndex = 0; slotIndex < ship.loadout.slotCount(); ++slotIndex) {
 		SDL_Rect slotRect = slotRectInCard(rect, slotIndex);
-		SDL_Color fillColor = slotColor(ship.loadout.design()->slots[slotIndex]);
+		const SlotBlueprint& blueprint = ship.loadout.design()->slots[slotIndex];
+		SDL_Color fillColor = slotColor(blueprint.preferredType);
 		drawPanel(renderer, slotRect, fillColor, colorFromHex(0x000000));
-		font.drawText(renderer, slotLabel(ship.loadout.design()->slots[slotIndex]),
-					  slotRect.x + 4, slotRect.y + 4, colorFromHex(0x000000), 2);
-		if (const ModuleSpec* module = ship.loadout.moduleAt(slotIndex)) {
-			font.drawText(renderer, module->shortLabel, slotRect.x + 4, slotRect.y + 32,
-						  colorFromHex(0x000000), 2);
+		font.drawText(renderer, slotLabel(blueprint.preferredType),
+				  slotRect.x + 4, slotRect.y + 4, colorFromHex(0x000000), 1);
+		const ModuleSpec* activeModule = ship.loadout.activeModuleAt(slotIndex);
+		if (activeModule) {
+			bool isTile = ship.loadout.moduleAt(slotIndex) != nullptr;
+			SDL_Color textColor = isTile ? colorFromHex(0x000000) : colorFromHex(0x222222);
+			font.drawText(renderer, activeModule->shortLabel, slotRect.x + 4, slotRect.y + 32,
+					  textColor, 1);
 		}
 	}
 }
@@ -325,28 +422,33 @@ void renderDragGhost(SDL_Renderer* renderer, BitmapFont& font, const DragPayload
 	}
 	SDL_Rect ghost{drag.mouseX - 50, drag.mouseY - 20, 100, 40};
 	drawPanel(renderer, ghost, slotColor(drag.spec->slot), colorFromHex(0xFFFFFF));
-	font.drawText(renderer, drag.spec->shortLabel, ghost.x + 6, ghost.y + 10, colorFromHex(0x000000), 2);
+	font.drawText(renderer, drag.spec->shortLabel, ghost.x + 6, ghost.y + 10, colorFromHex(0x000000), 1);
 }
 
 std::vector<ShipLoadout> collectFleet(const std::vector<FleetShip>& fleet) {
 	std::vector<ShipLoadout> result;
 	result.reserve(fleet.size());
 	for (const FleetShip& ship : fleet) {
+		if (!ship.active) {
+			continue;
+		}
 		result.push_back(ship.loadout);
 	}
 	return result;
 }
 
 bool fleetReady(const std::vector<FleetShip>& fleet) {
-	if (fleet.empty()) {
-		return false;
-	}
+	bool hasActive = false;
 	for (const FleetShip& ship : fleet) {
+		if (!ship.active) {
+			continue;
+		}
+		hasActive = true;
 		if (!ship.loadout.isValid()) {
 			return false;
 		}
 	}
-	return true;
+	return hasActive;
 }
 
 const std::vector<const ShipDesign*>& designOptionsFor(
@@ -387,6 +489,9 @@ int main(int argc, char** argv) {
 	BitmapFont& font = BitmapFont::instance();
 
 	SDL_Rect paletteRect{20, 20, 320, 680};
+	SDL_Rect dropdownRect{paletteRect.x + 16, paletteRect.y + 16, paletteRect.w - 32, 34};
+	SDL_Rect paletteGridRect{paletteRect.x + 16, dropdownRect.y + dropdownRect.h + 12,
+							paletteRect.w - 32, paletteRect.h - dropdownRect.h - 120};
 	SDL_Rect humanArea{360, 20, 900, 320};
 	SDL_Rect alienArea{360, 360, 900, 320};
 	SDL_Rect simulateButton{paletteRect.x + 20, paletteRect.y + paletteRect.h - 60,
@@ -395,18 +500,26 @@ int main(int argc, char** argv) {
 	const auto& moduleSpecs = TechCatalog::modules();
 	std::vector<const ModuleSpec*> moduleRefs;
 	for (const ModuleSpec& spec : moduleSpecs) {
+		if (spec.blueprintOnly) {
+			continue;
+		}
 		moduleRefs.push_back(&spec);
 	}
-	std::vector<PaletteEntry> paletteEntries = buildPalette(moduleRefs, paletteRect);
+	std::vector<ModuleCategory> moduleCategories = buildModuleCategories(moduleRefs);
+	size_t activeCategory = 0;
+	std::vector<CategoryOption> categoryOptions = buildCategoryOptions(dropdownRect, moduleCategories);
+	std::vector<PaletteEntry> paletteEntries =
+		buildPalette(moduleCategories[activeCategory].modules, paletteGridRect);
+	auto rebuildPaletteEntries = [&]() {
+		paletteEntries = buildPalette(moduleCategories[activeCategory].modules, paletteGridRect);
+	};
+	bool dropdownOpen = false;
 
 	std::vector<const ShipDesign*> humanDesigns = TechCatalog::factionDesigns(Faction::Human);
-	std::vector<const ShipDesign*> alienDesigns = TechCatalog::factionDesigns(Faction::Alien);
+	std::vector<const ShipDesign*> alienDesigns = TechCatalog::factionDesigns(Faction::Orion);
 
-	const ModuleSpec* defaultDrive = TechCatalog::findModule("NUCLEAR_DRIVE");
-	const ModuleSpec* defaultWeapon = TechCatalog::findModule("ION_CANNON");
-
-	std::vector<FleetShip> humanFleet = createFleet(Faction::Human, humanDesigns, defaultDrive, defaultWeapon);
-	std::vector<FleetShip> alienFleet = createFleet(Faction::Alien, alienDesigns, defaultDrive, defaultWeapon);
+	std::vector<FleetShip> humanFleet = createFleet(Faction::Human, humanDesigns);
+	std::vector<FleetShip> alienFleet = createFleet(Faction::Orion, alienDesigns);
 
 	DragPayload drag;
 	std::string statusMessage;
@@ -435,6 +548,10 @@ int main(int argc, char** argv) {
 		std::vector<ArrowRect> alienArrows = buildArrows(alienFleet, alienCards);
 		arrows.insert(arrows.end(), alienArrows.begin(), alienArrows.end());
 
+		std::vector<ToggleRect> toggles = buildToggles(humanFleet, humanCards);
+		std::vector<ToggleRect> alienToggles = buildToggles(alienFleet, alienCards);
+		toggles.insert(toggles.end(), alienToggles.begin(), alienToggles.end());
+
 		auto findSlot = [&](int x, int y) -> SlotRect* {
 			for (auto& slot : slotRects) {
 				if (pointInRect(x, y, slot.rect)) {
@@ -459,7 +576,7 @@ int main(int argc, char** argv) {
 				return;
 			}
 			size_t newIndex = (ship.designIndex + options.size() + static_cast<size_t>(delta)) % options.size();
-			assignDesign(ship, options, newIndex, defaultDrive, defaultWeapon);
+			assignDesign(ship, options, newIndex);
 			summaryReady = false;
 			setStatus("Design updated.");
 		};
@@ -507,11 +624,45 @@ int main(int argc, char** argv) {
 					int my = event.button.y;
 					if (event.button.button == SDL_BUTTON_LEFT) {
 						bool handled = false;
-						for (auto& arrow : arrows) {
-							if (pointInRect(mx, my, arrow.rect)) {
-								cycleDesign(*arrow.ship, arrow.delta);
-								handled = true;
-								break;
+						if (pointInRect(mx, my, dropdownRect)) {
+							dropdownOpen = !dropdownOpen;
+							handled = true;
+						} else if (dropdownOpen) {
+							for (const CategoryOption& option : categoryOptions) {
+								if (pointInRect(mx, my, option.rect)) {
+									if (option.index < moduleCategories.size() && activeCategory != option.index) {
+										activeCategory = option.index;
+										rebuildPaletteEntries();
+										setStatus(std::string("Showing ") + moduleCategories[activeCategory].name +
+												 " modules.");
+									}
+									handled = true;
+									break;
+								}
+							}
+							dropdownOpen = false;
+							handled = true;
+						}
+
+						if (!handled) {
+							for (auto& toggle : toggles) {
+								if (pointInRect(mx, my, toggle.rect)) {
+									toggle.ship->active = !toggle.ship->active;
+									summaryReady = false;
+									setStatus(toggle.ship->active ? "Ship activated." : "Ship deactivated.");
+									handled = true;
+									break;
+								}
+							}
+						}
+
+						if (!handled) {
+							for (auto& arrow : arrows) {
+								if (pointInRect(mx, my, arrow.rect)) {
+									cycleDesign(*arrow.ship, arrow.delta);
+									handled = true;
+									break;
+								}
 							}
 						}
 						if (!handled) {
@@ -561,7 +712,7 @@ int main(int argc, char** argv) {
 							completeDrag(mx, my);
 						} else if (simulatePressed && pointInRect(mx, my, simulateButton)) {
 							if (!fleetReady(humanFleet) || !fleetReady(alienFleet)) {
-								setStatus("All ships need engines and enough energy before simulating.");
+								setStatus("Activate at least one valid ship per fleet before simulating.");
 							} else {
 								summary = simulator.simulate(collectFleet(humanFleet), collectFleet(alienFleet));
 								summaryReady = true;
@@ -586,7 +737,9 @@ int main(int argc, char** argv) {
 		SDL_SetRenderDrawColor(renderer, 14, 20, 37, 255);
 		SDL_RenderClear(renderer);
 
-		renderPalette(renderer, font, paletteRect, paletteEntries);
+		renderPalette(renderer, font, paletteRect, dropdownRect,
+				 moduleCategories[activeCategory].name, dropdownOpen,
+				 categoryOptions, paletteEntries);
 
 		for (size_t i = 0; i < humanFleet.size() && i < humanCards.size(); ++i) {
 			renderShipCard(renderer, font, humanFleet[i], humanCards[i], true);
@@ -598,7 +751,7 @@ int main(int argc, char** argv) {
 		SDL_Color buttonColor = simulatePressed ? colorFromHex(0xFF9F1C) : colorFromHex(0x2EC4B6);
 		drawPanel(renderer, simulateButton, buttonColor, colorFromHex(0x011627));
 		font.drawText(renderer, "SIMULATE BATTLE", simulateButton.x + 20, simulateButton.y + 10,
-					  colorFromHex(0x011627), 2);
+				  colorFromHex(0x011627), 1);
 
 		if (summaryReady) {
 			std::ostringstream lines;
@@ -609,12 +762,12 @@ int main(int argc, char** argv) {
 			lines << "DRAW " << summary.draw * 100.0 << "%\n";
 			lines << "EXP ROUNDS " << summary.expectedRounds;
 			font.drawText(renderer, lines.str(), paletteRect.x + 10, paletteRect.y + paletteRect.h - 180,
-						  colorFromHex(0xF1FAEE), 2);
+					  colorFromHex(0xF1FAEE), 1);
 		}
 
 		if (!statusMessage.empty() && SDL_GetTicks() - statusTimer < 4000) {
 			font.drawText(renderer, statusMessage, paletteRect.x + 10, paletteRect.y + paletteRect.h - 24,
-						  colorFromHex(0xFF5964), 2);
+					  colorFromHex(0xFF5964), 1);
 		}
 
 		renderDragGhost(renderer, font, drag);

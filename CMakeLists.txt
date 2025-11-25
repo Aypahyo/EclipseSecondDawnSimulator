@@ -20,3 +20,11 @@ add_executable(eclipse_sim
 target_include_directories(eclipse_sim PRIVATE include)
 
 target_link_libraries(eclipse_sim PRIVATE SDL2::SDL2)
+
+add_executable(battle_sim_tests
+    tests/battle_simulator_spec.cpp
+    src/game/tech_catalog.cpp
+    src/game/battle_simulator.cpp
+)
+
+target_include_directories(battle_sim_tests PRIVATE include)
